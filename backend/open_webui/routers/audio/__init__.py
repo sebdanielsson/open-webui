@@ -908,7 +908,9 @@ async def _transcribe_openai(request, file_path, filename, languages, file_dir, 
             headers = include_user_info_headers(headers, user)
 
         for language in languages:
-            payload = {'model': await Config.get('audio.stt.model')}
+            # Only 'text' is read back. Ask for json explicitly: LiteLLM substitutes
+            # verbose_json when the field is missing, and not every server supports it.
+            payload = {'model': await Config.get('audio.stt.model'), 'response_format': 'json'}
             if language:
                 payload['language'] = language
 
