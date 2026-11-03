@@ -876,6 +876,10 @@ RAPIDOCR_PARAMS = rapidocr_params
 # the upstream provider handles these steps or when ffmpeg is unavailable.
 BYPASS_PYDUB_PREPROCESSING = USE_SLIM or os.getenv('BYPASS_PYDUB_PREPROCESSING', 'False').lower() == 'true'
 
+# Format that preprocessing converts speech-to-text audio to: mp3 (default), wav,
+# flac or ogg. For self-hosted STT servers whose audio decoder cannot read mp3.
+AUDIO_STT_CONVERSION_FORMAT = os.getenv('AUDIO_STT_CONVERSION_FORMAT', 'mp3').strip().lower() or 'mp3'
+
 # When disabled (default), the OpenAI catch-all proxy endpoint (/{path:path})
 # is blocked. Enable only if you need direct passthrough to upstream OpenAI-
 # compatible APIs for endpoints not natively handled by Open WebUI.

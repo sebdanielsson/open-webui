@@ -45,6 +45,7 @@ from open_webui.env import (
     AIOHTTP_CLIENT_TIMEOUT,
     AIOHTTP_CLIENT_TIMEOUT_MODEL_LIST,
     AIOHTTP_FILE_STREAM_CHUNK_SIZE,
+    AUDIO_STT_CONVERSION_FORMAT,
     BYPASS_PYDUB_PREPROCESSING,
     DEVICE_TYPE,
     ENABLE_FORWARD_USER_INFO_HEADERS,
@@ -143,15 +144,20 @@ def config_updates(data: dict, key_map: dict[str, str]) -> dict:
     return {key_map[field]: value for field, value in data.items() if field in key_map}
 
 
-def is_audio_conversion_required(file_path):
+def is_audio_conversion_required(file_path, format='mp3'):
     """
-    Check if the given audio file needs conversion to mp3.
+    Check if the given audio file needs conversion to the given format.
     """
     SUPPORTED_FORMATS = {'flac', 'm4a', 'mp3', 'mp4', 'mpeg', 'wav', 'webm'}
 
     if not os.path.isfile(file_path):
         log.error(f'File not found: {file_path}')
         return False
+
+    # mp3 is the default target; anything else was chosen for a server that
+    # decodes only that format, so convert unless the file already is one.
+    if format != 'mp3':
+        return not file_path.lower().endswith(f'.{format}')
 
     try:
         info = mediainfo(file_path)
@@ -173,12 +179,12 @@ def is_audio_conversion_required(file_path):
         return False
 
 
-def convert_audio_to_mp3(file_path):
-    """Convert audio file to mp3 format."""
+def convert_audio(file_path, format='mp3'):
+    """Convert audio file to the given format."""
     try:
-        output_path = os.path.splitext(file_path)[0] + '.mp3'
+        output_path = f'{os.path.splitext(file_path)[0]}.{format}'
         audio = AudioSegment.from_file(file_path)
-        audio.export(output_path, format='mp3')
+        audio.export(output_path, format=format)
         log.info('Converted %s to %s', file_path, output_path)
         return output_path
     except Exception as e:
@@ -1228,7 +1234,7 @@ async def _transcribe_mistral(request, file_path, filename, metadata, file_dir, 
                 )
             if not BYPASS_PYDUB_PREPROCESSING and is_audio_conversion_required(file_path):
                 log.debug('Converting audio to mp3 for chat completions API')
-                converted_path = await asyncio.to_thread(convert_audio_to_mp3, file_path)
+                converted_path = await asyncio.to_thread(convert_audio, file_path)
                 if converted_path:
                     audio_file_to_use = converted_path
                 else:
@@ -1349,8 +1355,8 @@ async def transcribe(request: Request, file_path: str, metadata: Optional[dict] 
         log.info('Bypassing pydub preprocessing (BYPASS_PYDUB_PREPROCESSING=true)')
         chunk_paths = [file_path]
     else:
-        if is_audio_conversion_required(file_path):
-            file_path = await asyncio.to_thread(convert_audio_to_mp3, file_path)
+        if is_audio_conversion_required(file_path, AUDIO_STT_CONVERSION_FORMAT):
+            file_path = await asyncio.to_thread(convert_audio, file_path, AUDIO_STT_CONVERSION_FORMAT)
             if not file_path:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -1358,13 +1364,19 @@ async def transcribe(request: Request, file_path: str, metadata: Optional[dict] 
                 )
 
         try:
-            file_path = await asyncio.to_thread(compress_audio, file_path)
+            file_path = await asyncio.to_thread(compress_audio, file_path, AUDIO_STT_CONVERSION_FORMAT)
         except Exception as e:
             log.exception(e)
 
         # Always produce a list of chunk paths (could be one entry if small)
         try:
-            chunk_paths = await asyncio.to_thread(split_audio, file_path, MAX_FILE_SIZE)
+            chunk_paths = await asyncio.to_thread(
+                split_audio,
+                file_path,
+                MAX_FILE_SIZE,
+                AUDIO_STT_CONVERSION_FORMAT,
+                get_bitrate(AUDIO_STT_CONVERSION_FORMAT),
+            )
             print(f'Chunk paths: {chunk_paths}')
         except Exception as e:
             log.exception(e)
@@ -1398,7 +1410,13 @@ async def transcribe(request: Request, file_path: str, metadata: Optional[dict] 
     }
 
 
-def compress_audio(file_path):
+def get_bitrate(format):
+    # A bitrate only applies to lossy formats; wav and flac shrink through the
+    # 16 kHz mono downmix alone.
+    return '32k' if format in ('mp3', 'ogg') else None
+
+
+def compress_audio(file_path, format='mp3'):
     if os.path.getsize(file_path) > MAX_FILE_SIZE:
         id = os.path.splitext(os.path.basename(file_path))[0]  # Handles names with multiple dots
         file_dir = os.path.dirname(file_path)
@@ -1406,8 +1424,8 @@ def compress_audio(file_path):
         audio = AudioSegment.from_file(file_path)
         audio = audio.set_frame_rate(16000).set_channels(1)  # Compress audio
 
-        compressed_path = os.path.join(file_dir, f'{id}_compressed.mp3')
-        audio.export(compressed_path, format='mp3', bitrate='32k')
+        compressed_path = os.path.join(file_dir, f'{id}_compressed.{format}')
+        audio.export(compressed_path, format=format, bitrate=get_bitrate(format))
         # log.debug(f"Compressed audio to {compressed_path}")  # Uncomment if log is defined
 
         return compressed_path
