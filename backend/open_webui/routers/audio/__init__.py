@@ -116,6 +116,7 @@ STT_CONFIG_KEYS = {
     'OPENAI_API_BASE_URL': 'audio.stt.openai.api_base_url',
     'OPENAI_API_KEY': 'audio.stt.openai.api_key',
     'OPENAI_API_REQUEST_FORMAT': 'audio.stt.openai.api_request_format',
+    'OPENAI_PARAMS': 'audio.stt.openai.params',
     'ENGINE': 'audio.stt.engine',
     'MODEL': 'audio.stt.model',
     'SUPPORTED_CONTENT_TYPES': 'audio.stt.supported_content_types',
@@ -278,6 +279,7 @@ class STTConfigForm(BaseModel):
     OPENAI_API_BASE_URL: str
     OPENAI_API_KEY: str
     OPENAI_API_REQUEST_FORMAT: str = 'multipart'
+    OPENAI_PARAMS: Optional[dict] = None
     ENGINE: str
     MODEL: str
     SUPPORTED_CONTENT_TYPES: list[str] = []
@@ -902,6 +904,7 @@ async def _transcribe_openai(request, file_path, filename, languages, file_dir, 
         api_key = await Config.get('audio.stt.openai.api_key')
         api_base_url = await Config.get('audio.stt.openai.api_base_url')
         request_format = (await Config.get('audio.stt.openai.api_request_format') or 'multipart').lower()
+        params = await Config.get('audio.stt.openai.params') or {}
 
         headers = {'Authorization': f'Bearer {api_key}'}
         if user and ENABLE_FORWARD_USER_INFO_HEADERS:
@@ -910,7 +913,7 @@ async def _transcribe_openai(request, file_path, filename, languages, file_dir, 
         for language in languages:
             # Only 'text' is read back. Ask for json explicitly: LiteLLM substitutes
             # verbose_json when the field is missing, and not every server supports it.
-            payload = {'model': await Config.get('audio.stt.model'), 'response_format': 'json'}
+            payload = {'model': await Config.get('audio.stt.model'), 'response_format': 'json', **params}
             if language:
                 payload['language'] = language
 
